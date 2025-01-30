@@ -1,11 +1,17 @@
 #![no_std]
 #![no_main]
 
+use alloc::string::ToString;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
-use esp_hal::clock::CpuClock;
+use esp_hal::{clock::CpuClock, time};
+use esp_wifi::wifi::{
+    utils::create_network_interface, AccessPointInfo, AuthMethod, ClientConfiguration,
+    Configuration, WifiError, WifiStaDevice,
+};
 use log::info;
+use smoltcp::iface::SocketStorage;
 
 extern crate alloc;
 
@@ -25,14 +31,64 @@ async fn main(spawner: Spawner) {
 
     info!("Embassy initialized!");
 
-    let timer1 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
-    let _init = esp_wifi::init(
-        timer1.timer0,
+    // configure wifi
+    let timg0 = esp_hal::timer::timg::TimerGroup::new(peripherals.TIMG0);
+    let init = esp_wifi::init(
+        timg0.timer0,
         esp_hal::rng::Rng::new(peripherals.RNG),
         peripherals.RADIO_CLK,
     )
     .unwrap();
 
+    let mut wifi = peripherals.WIFI;
+    let mut socket_set_entries: [SocketStorage; 3] = Default::default();
+
+    let (iface, device, mut controller) =
+        create_network_interface(&init, &mut wifi, WifiStaDevice).unwrap();
+
+    let ssid = env!("SSID");
+    let pass = env!("PASSWORD");
+    let client_config = Configuration::Client(ClientConfiguration {
+        ssid: heapless::String::try_from("todo").unwrap(),
+        bssid: None,
+        auth_method: AuthMethod::WPAWPA2Personal,
+        password: heapless::String::try_from("todo").unwrap(),
+        channel: None,
+    });
+
+    let res = controller.set_configuration(&client_config);
+    info!("Wi-Fi set_configuration returned {:?}", res);
+
+    controller.start().unwrap();
+    info!("Is wifi started: {:?}", controller.is_started());
+
+    info!("Start Wifi Scan");
+    let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
+    if let Ok((res, _count)) = res {
+        for ap in res {
+            info!("{:?}", ap);
+        }
+    }
+
+    info!("{:?}", controller.capabilities());
+    info!("Wi-Fi connect: {:?}", controller.connect());
+
+    info!("Wait to get connected");
+    loop {
+        let res = controller.is_connected();
+        match res {
+            Ok(connected) => {
+                if connected {
+                    info!("Wi-Fi is CONNECTED!");
+                    break;
+                }
+            }
+            Err(err) => {
+                info!("{:?}", err);
+                loop {}
+            }
+        }
+    }
     // TODO: Spawn some tasks
     let _ = spawner;
 
