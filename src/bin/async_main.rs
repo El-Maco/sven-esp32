@@ -1,6 +1,10 @@
 #![no_std]
 #![no_main]
 
+use core::str::from_utf8;
+
+use serde::Deserialize;
+use serde_json_core::from_slice;
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, IpAddress, IpEndpoint, Runner, StackResources};
 use esp_backtrace as _;
@@ -103,32 +107,70 @@ async fn main(spawner: Spawner) {
         match connection {
             Ok(()) => {
                 info!("✓ Successfully connected to {}:{}", ip, port);
+                let mut config = rust_mqtt::client::client_config::ClientConfig::new(
+                    rust_mqtt::client::client_config::MqttVersion::MQTTv5,
+                    CountingRng(20000),
+                );
+                config.add_max_subscribe_qos(
+                    rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS1,
+                );
+                config.add_client_id("sven");
+                config.max_packet_size = 100;
+                let mut recv_buffer = [0; 80];
+                let mut write_buffer = [0; 80];
 
-                // Try to send a simple byte to test the connection
-                match socket.write(&[0x10, 0x00]).await {
-                    Ok(bytes_written) => {
-                        info!("✓ Successfully wrote {} bytes", bytes_written);
+                let mut client = MqttClient::<_, 5, _>::new(
+                    socket,
+                    &mut write_buffer,
+                    80,
+                    &mut recv_buffer,
+                    80,
+                    config,
+                );
+
+                match client.connect_to_broker().await {
+                    Ok(()) => {
+                        info!("✓ Connected to MQTT broker at {}:{}", ip, port);
                     }
-                    Err(e) => {
-                        error!("✗ Failed to write data: {:?}", e);
-                    }
+                    Err(mqtt_error) => match mqtt_error {
+                        ReasonCode::NetworkError => {
+                            error!("MQTT Network Error: {:?}", mqtt_error);
+                            continue;
+                        }
+                        _ => {
+                            error!("Other MQTT Error: {:?}", mqtt_error);
+                            continue;
+                        }
+                    },
                 }
 
-                // Try to read response (MQTT CONNACK or connection close)
-                let mut buf = [0; 64];
-                socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
-                match socket.read(&mut buf).await {
-                    Ok(bytes_read) => {
-                        info!("✓ Read {} bytes: {:?}", bytes_read, &buf[..bytes_read]);
+                client.subscribe_to_topic("test").await.ok();
+                loop {
+                    info!("Waiting for incoming MQTT packets...");
+                    match client.receive_message().await {
+                        Ok((topic, packet)) => {
+                            info!("Received packet: {topic}: {:?}", packet);
+                            let text = from_utf8(packet).unwrap_or("");
+                            info!("Received packet text: {}", text);
+                            let command = handle_message(packet);
+                            info!("Command handled: {:?}", command);
+                            // Handle the received packet here
+                            // For example, if it's a PUBLISH packet, you can process the payload
+                            // if let rust_mqtt::packet::v5::Packet::Publish(publish) = packet {
+                            //     info!(
+                            //         "Received PUBLISH on topic {}: {:?}",
+                            //         publish.topic_name, publish.payload
+                            //     );
+                            // }
+                        }
+                        Err(e) => {
+                            error!("Error receiving packet: {:?}", e);
+                            break; // Exit the loop on error
+                        }
                     }
-                    Err(e) => {
-                        warn!("Could not read response (this might be normal): {:?}", e);
-                    }
+                    info!("Waiting for next packet...");
+                    sleep(1000).await;
                 }
-
-                socket.close();
-                info!("Connection test completed successfully");
-                break;
             }
             Err(e) => {
                 error!("✗ Failed to connect: {:?}", e);
@@ -170,34 +212,6 @@ async fn main(spawner: Spawner) {
                     error!("Network configuration lost!");
                 }
             }
-        }
-        info!("connected!");
-
-        let mut config = rust_mqtt::client::client_config::ClientConfig::new(
-            rust_mqtt::client::client_config::MqttVersion::MQTTv5,
-            CountingRng(20000),
-        );
-        config.add_max_subscribe_qos(rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS1);
-        config.add_client_id("sven");
-        config.max_packet_size = 100;
-        let mut recv_buffer = [0; 80];
-        let mut write_buffer = [0; 80];
-
-        let mut client =
-            MqttClient::<_, 5, _>::new(socket, &mut write_buffer, 80, &mut recv_buffer, 80, config);
-
-        match client.connect_to_broker().await {
-            Ok(()) => {}
-            Err(mqtt_error) => match mqtt_error {
-                ReasonCode::NetworkError => {
-                    error!("MQTT Network Error: {:?}", mqtt_error);
-                    continue;
-                }
-                _ => {
-                    error!("Other MQTT Error: {:?}", mqtt_error);
-                    continue;
-                }
-            },
         }
     }
 
@@ -267,4 +281,37 @@ fn str_to_ip(ip: &str) -> IpAddress {
         split_ip[2].parse().unwrap_or(0),
         split_ip[3].parse().unwrap_or(0),
     )
+}
+
+#[derive(Deserialize, Debug)]
+pub enum Direction {
+    Up,
+    Down,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct DeskCommand {
+    pub direction: Direction,
+    pub duration: u32, // in milliseconds
+}
+
+fn handle_message(data: &[u8]) {
+    match from_slice::<DeskCommand>(data) {
+        Ok((command, _)) => {
+            info!("Received command: {:?}", command);
+            match command.direction {
+                Direction::Up => {
+                    info!("Moving desk up for {} ms", command.duration);
+                    // Add code to move desk up
+                }
+                Direction::Down => {
+                    info!("Moving desk down for {} ms", command.duration);
+                    // Add code to move desk down
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to parse message: {:?}", e);
+        }
+    }
 }
