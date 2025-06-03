@@ -3,12 +3,11 @@
 
 use core::str::from_utf8;
 
-use serde::Deserialize;
-use serde_json_core::from_slice;
 use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, IpAddress, IpEndpoint, Runner, StackResources};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
+use esp_hal::gpio::Output;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
 use esp_wifi::wifi::WifiStaDevice;
@@ -17,6 +16,10 @@ use heapless::Vec;
 use log::{debug, error, info, warn};
 use rust_mqtt::packet::v5::reason_codes::ReasonCode;
 use rust_mqtt::{client::client::MqttClient, utils::rng_generator::CountingRng};
+use serde::Deserialize;
+use serde_json_core::from_slice;
+
+use sven_esp32::gpio::PulsePin;
 
 extern crate alloc;
 
@@ -45,6 +48,15 @@ async fn main(spawner: Spawner) {
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let mut rng = Rng::new(peripherals.RNG);
+
+    let mut pin_up = PulsePin::new(
+        Output::new(peripherals.GPIO5, esp_hal::gpio::Level::Low),
+        true,
+    );
+    let mut pin_down = PulsePin::new(
+        Output::new(peripherals.GPIO7, esp_hal::gpio::Level::Low),
+        true,
+    );
 
     esp_println::logger::init_logger_from_env();
 
@@ -152,16 +164,14 @@ async fn main(spawner: Spawner) {
                             info!("Received packet: {topic}: {:?}", packet);
                             let text = from_utf8(packet).unwrap_or("");
                             info!("Received packet text: {}", text);
-                            let command = handle_message(packet);
-                            info!("Command handled: {:?}", command);
-                            // Handle the received packet here
-                            // For example, if it's a PUBLISH packet, you can process the payload
-                            // if let rust_mqtt::packet::v5::Packet::Publish(publish) = packet {
-                            //     info!(
-                            //         "Received PUBLISH on topic {}: {:?}",
-                            //         publish.topic_name, publish.payload
-                            //     );
-                            // }
+                            if let Some(command) = parse_mqtt_message(packet).ok() {
+                                info!("Parsed command: {:?}", command);
+                                // Handle the desk command
+                                handle_desk_command(&command, &mut pin_up, &mut pin_down).await;
+                            } else {
+                                error!("Failed to parse MQTT message");
+                                continue;
+                            }
                         }
                         Err(e) => {
                             error!("Error receiving packet: {:?}", e);
@@ -295,7 +305,7 @@ pub struct DeskCommand {
     pub duration: u32, // in milliseconds
 }
 
-fn handle_message(data: &[u8]) {
+fn parse_mqtt_message(data: &[u8]) -> Result<DeskCommand, serde_json_core::de::Error> {
     match from_slice::<DeskCommand>(data) {
         Ok((command, _)) => {
             info!("Received command: {:?}", command);
@@ -303,15 +313,34 @@ fn handle_message(data: &[u8]) {
                 Direction::Up => {
                     info!("Moving desk up for {} ms", command.duration);
                     // Add code to move desk up
+                    Ok(command)
                 }
                 Direction::Down => {
                     info!("Moving desk down for {} ms", command.duration);
                     // Add code to move desk down
+                    Ok(command)
                 }
             }
         }
         Err(e) => {
-            error!("Failed to parse message: {:?}", e);
+            panic!("Failed to parse message: {:?}", e);
+        }
+    }
+}
+
+async fn handle_desk_command<'d>(
+    command: &DeskCommand,
+    pin_up: &mut PulsePin<'d>,
+    pin_down: &mut PulsePin<'d>,
+) {
+    match command.direction {
+        Direction::Up => {
+            info!("Moving desk up for {} ms", command.duration);
+            pin_up.pulse(command.duration).await;
+        }
+        Direction::Down => {
+            info!("Moving desk down for {} ms", command.duration);
+            pin_down.pulse(command.duration).await;
         }
     }
 }
