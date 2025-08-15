@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json_core::from_slice;
 
 use sven_esp32::gpio::PulsePin;
-use sven_esp32::sven_state::SvenState;
+use sven_esp32::sven_state::{SvenPosition, SvenState};
 
 extern crate alloc;
 
@@ -102,7 +102,7 @@ async fn main(spawner: Spawner) {
         error!("No IPv4 configuration available!");
     }
 
-    let sven_state = SvenState::new(pin_up, pin_down);
+    let mut sven_state = SvenState::new(pin_up, pin_down).await;
 
     loop {
         sleep(1_000).await;
@@ -170,7 +170,7 @@ async fn main(spawner: Spawner) {
                             if let Some(command) = parse_mqtt_message(packet).ok() {
                                 info!("Parsed command: {:?}", command);
                                 // Handle the desk command
-                                // handle_desk_command(&command, &mut pin_up, &mut pin_down).await;
+                                handle_desk_command(&command, &mut sven_state).await;
                             } else {
                                 error!("Failed to parse MQTT message");
                                 continue;
@@ -297,6 +297,16 @@ fn str_to_ip(ip: &str) -> IpAddress {
 }
 
 #[derive(Deserialize, Debug)]
+pub enum SvenCommand {
+    UpDuration,     // value: ms
+    DownDuration,   // value: ms
+    UpRelative,     // value: mm
+    DownRelative,   // value: mm
+    AbsoluteHeight, // value: mm
+    Position,       // value: SvenPosition
+}
+
+#[derive(Deserialize, Debug)]
 pub enum Direction {
     Up,
     Down,
@@ -304,26 +314,15 @@ pub enum Direction {
 
 #[derive(Deserialize, Debug)]
 pub struct DeskCommand {
-    pub direction: Direction,
-    pub duration: u32, // in milliseconds
+    pub command: SvenCommand,
+    pub value: u32,
 }
 
 fn parse_mqtt_message(data: &[u8]) -> Result<DeskCommand, serde_json_core::de::Error> {
     match from_slice::<DeskCommand>(data) {
         Ok((command, _)) => {
             info!("Received command: {:?}", command);
-            match command.direction {
-                Direction::Up => {
-                    info!("Moving desk up for {} ms", command.duration);
-                    // Add code to move desk up
-                    Ok(command)
-                }
-                Direction::Down => {
-                    info!("Moving desk down for {} ms", command.duration);
-                    // Add code to move desk down
-                    Ok(command)
-                }
-            }
+            Ok(command)
         }
         Err(e) => {
             panic!("Failed to parse message: {:?}", e);
@@ -331,19 +330,33 @@ fn parse_mqtt_message(data: &[u8]) -> Result<DeskCommand, serde_json_core::de::E
     }
 }
 
-async fn handle_desk_command<'d>(
-    command: &DeskCommand,
-    pin_up: &mut PulsePin<'d>,
-    pin_down: &mut PulsePin<'d>,
-) {
-    match command.direction {
-        Direction::Up => {
-            info!("Moving desk up for {} ms", command.duration);
-            pin_up.pulse(command.duration).await;
+async fn handle_desk_command<'d>(command: &DeskCommand, sven_state: &mut SvenState<'d>) {
+    match command.command {
+        SvenCommand::UpDuration => {
+            info!("Moving up for {} ms", command.value);
+            sven_state.move_up(command.value).await;
         }
-        Direction::Down => {
-            info!("Moving desk down for {} ms", command.duration);
-            pin_down.pulse(command.duration).await;
+        SvenCommand::DownDuration => {
+            info!("Moving down for {} ms", command.value);
+            sven_state.move_down(command.value).await;
+        }
+        SvenCommand::UpRelative => {
+            info!("Moving up by {} mm", command.value);
+            sven_state.move_up_relative(command.value).await;
+        }
+        SvenCommand::DownRelative => {
+            info!("Moving down by {} mm", command.value);
+            sven_state.move_down_relative(command.value).await;
+        }
+        SvenCommand::AbsoluteHeight => {
+            info!("Setting absolute height to {} mm", command.value);
+            sven_state.move_to_height(command.value).await;
+        }
+        SvenCommand::Position => {
+            info!("Setting position to {:?}", command.value);
+            let sven_position =
+                SvenPosition::try_from(command.value).unwrap_or(SvenPosition::Armrest);
+            sven_state.move_to_position(sven_position).await;
         }
     }
 }
