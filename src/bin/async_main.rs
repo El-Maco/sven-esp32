@@ -50,11 +50,11 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let mut rng = Rng::new(peripherals.RNG);
 
-    let mut pin_up = PulsePin::new(
+    let pin_up = PulsePin::new(
         Output::new(peripherals.GPIO5, esp_hal::gpio::Level::Low),
         true,
     );
-    let mut pin_down = PulsePin::new(
+    let pin_down = PulsePin::new(
         Output::new(peripherals.GPIO7, esp_hal::gpio::Level::Low),
         true,
     );
@@ -101,6 +101,8 @@ async fn main(spawner: Spawner) {
     } else {
         error!("No IPv4 configuration available!");
     }
+
+    let sven_state = SvenState::new(pin_up, pin_down);
 
     loop {
         sleep(1_000).await;
@@ -168,7 +170,7 @@ async fn main(spawner: Spawner) {
                             if let Some(command) = parse_mqtt_message(packet).ok() {
                                 info!("Parsed command: {:?}", command);
                                 // Handle the desk command
-                                handle_desk_command(&command, &mut pin_up, &mut pin_down).await;
+                                // handle_desk_command(&command, &mut pin_up, &mut pin_down).await;
                             } else {
                                 error!("Failed to parse MQTT message");
                                 continue;

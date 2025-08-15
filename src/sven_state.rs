@@ -1,3 +1,5 @@
+use crate::gpio::PulsePin;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum SvenPosition {
     Bottom,
@@ -8,12 +10,14 @@ pub enum SvenPosition {
     Custom,
 }
 
-pub struct SvenState {
+pub struct SvenState<'d> {
     height_mm: u32,
     position: SvenPosition,
+    pin_up: PulsePin<'d>,
+    pin_down: PulsePin<'d>,
 }
 
-impl SvenState {
+impl<'d> SvenState<'d> {
     const MIN_HEIGHT_MM: u32 = 622;
     const MAX_HEIGHT_MM: u32 = 1274;
     const POSITIONS_MM: &'static [(SvenPosition, u32)] = &[
@@ -39,12 +43,14 @@ impl SvenState {
 
     // Create a new SvenState instance with default position
     // and height set to the armrest position.
-    pub fn new() -> Self {
+    pub async fn new(pin_up: PulsePin<'d>, pin_down: PulsePin<'d>) -> Self {
         let mut sven_state = SvenState {
             height_mm: 0,
             position: SvenPosition::Custom,
+            pin_up,
+            pin_down,
         };
-        sven_state.move_to_position(SvenPosition::Armrest);
+        sven_state.move_to_position(SvenPosition::Armrest).await;
         sven_state
     }
 
@@ -62,56 +68,58 @@ impl SvenState {
             .map_or(0, |&(_, cm)| cm * 10) // Convert cm to mm
     }
 
-    pub fn move_to_position(&mut self, position: SvenPosition) {
+    pub async fn move_to_position(&mut self, position: SvenPosition) {
+        if self.position == SvenPosition::Custom {
+            self.move_up(20000).await; // Move to top position
+            self.position = SvenPosition::Top;
+            self.height_mm = Self::MAX_HEIGHT_MM;
+        }
         match self.position {
             SvenPosition::Top => match position {
-                SvenPosition::Top => self.move_up(5000), // Move up just in case
-                SvenPosition::Standing => self.move_down(4300),
-                SvenPosition::AboveArmrest => self.move_down(13500),
-                SvenPosition::Armrest => self.move_down(14800),
-                SvenPosition::Bottom => self.move_down(20000),
+                SvenPosition::Top => self.move_up(5000).await, // Move up just in case
+                SvenPosition::Standing => self.move_down(4300).await,
+                SvenPosition::AboveArmrest => self.move_down(13500).await,
+                SvenPosition::Armrest => self.move_down(14800).await,
+                SvenPosition::Bottom => self.move_down(20000).await,
                 _ => {}
             },
             SvenPosition::Armrest => match position {
-                SvenPosition::Bottom => self.move_down(5000),
-                SvenPosition::AboveArmrest => self.move_up(1920),
-                SvenPosition::Standing => self.move_up(11000),
-                SvenPosition::Top => self.move_up(16000),
+                SvenPosition::Bottom => self.move_down(5000).await,
+                SvenPosition::AboveArmrest => self.move_up(1920).await,
+                SvenPosition::Standing => self.move_up(11000).await,
+                SvenPosition::Top => self.move_up(16000).await,
                 _ => {}
             },
             SvenPosition::AboveArmrest => match position {
-                SvenPosition::Armrest => self.move_down(1900),
-                SvenPosition::Bottom => self.move_down(7000),
-                SvenPosition::Standing => self.move_up(9900),
-                SvenPosition::Top => self.move_up(15000),
+                SvenPosition::Armrest => self.move_down(1900).await,
+                SvenPosition::Bottom => self.move_down(7000).await,
+                SvenPosition::Standing => self.move_up(9900).await,
+                SvenPosition::Top => self.move_up(15000).await,
                 _ => {}
             },
             SvenPosition::Standing => match position {
-                SvenPosition::Armrest => self.move_down(10800),
-                SvenPosition::AboveArmrest => self.move_down(9900),
-                SvenPosition::Bottom => self.move_down(15000),
+                SvenPosition::Armrest => self.move_down(10800).await,
+                SvenPosition::AboveArmrest => self.move_down(9900).await,
+                SvenPosition::Bottom => self.move_down(15000).await,
                 _ => {}
             },
-            SvenPosition::Custom => {
-                self.move_up(20000);
-                self.position = SvenPosition::Top;
-                self.move_to_position(position);
-            } // Custom position handling can be added later
             _ => {}
         }
         self.position = position;
         self.height_mm = self.get_position_mm(position);
     }
 
-    pub fn move_up(&mut self, delta_ms: u32) {
+    pub async fn move_up(&mut self, delta_ms: u32) {
         let delta_mm = self.get_duration_mm(delta_ms);
 
         self.height_mm = Self::MAX_HEIGHT_MM
             .min(self.height_mm.saturating_add(delta_mm));
+        self.pin_up.pulse(delta_ms).await;
     }
 
-    pub fn move_down(&mut self, delta_ms: u32) {
+    pub async fn move_down(&mut self, delta_ms: u32) {
         let delta_mm = self.get_duration_mm(delta_ms);
         self.height_mm = Self::MIN_HEIGHT_MM.max(self.height_mm.saturating_sub(delta_mm));
+        self.pin_down.pulse(delta_ms).await;
     }
 }
