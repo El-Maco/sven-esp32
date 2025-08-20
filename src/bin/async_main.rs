@@ -14,13 +14,14 @@ use esp_wifi::wifi::WifiStaDevice;
 use esp_wifi::{wifi::WifiDevice, EspWifiController};
 use heapless::Vec;
 use log::{debug, error, info, warn};
+use rust_mqtt::packet::v5::mqtt_packet::Packet;
 use rust_mqtt::packet::v5::reason_codes::ReasonCode;
 use rust_mqtt::{client::client::MqttClient, utils::rng_generator::CountingRng};
 use serde::Deserialize;
 use serde_json_core::from_slice;
 
 use sven_esp32::gpio::PulsePin;
-use sven_esp32::sven_state::{SvenPosition, SvenState};
+use sven_esp32::sven_state::{SvenPosition, SvenState, SvenStatePub};
 
 extern crate alloc;
 
@@ -129,7 +130,7 @@ async fn main(spawner: Spawner) {
                 config.add_max_subscribe_qos(
                     rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS1,
                 );
-                config.add_client_id("sven");
+                config.add_client_id("sven-esp32");
                 config.max_packet_size = 100;
                 let mut recv_buffer = [0; 80];
                 let mut write_buffer = [0; 80];
@@ -159,7 +160,27 @@ async fn main(spawner: Spawner) {
                     },
                 }
 
-                client.subscribe_to_topic("test").await.ok();
+                client.subscribe_to_topic("sven/command").await.ok();
+
+                let sven_state_pub = SvenStatePub::new(&sven_state);
+                let sven_state_json: serde_json_core::heapless::String<128> =
+                    serde_json_core::to_string(&sven_state_pub).unwrap_or_else(|e| {
+                        error!("Failed to serialize SvenState: {:?}", e);
+                        serde_json_core::heapless::String::from("{}")
+                    });
+                info!("Publishing SvenState: {:?}", sven_state_pub);
+                client
+                    .send_message(
+                        "sven/state",
+                        sven_state_json.as_bytes(),
+                        rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0,
+                        true,
+                    )
+                    .await
+                    .unwrap_or_else(|e| {
+                        error!("Failed to publish SvenState: {:?}", e);
+                    });
+
                 loop {
                     info!("Waiting for incoming MQTT packets...");
                     match client.receive_message().await {
@@ -171,6 +192,22 @@ async fn main(spawner: Spawner) {
                                 info!("Parsed command: {:?}", command);
                                 // Handle the desk command
                                 handle_desk_command(&command, &mut sven_state).await;
+                                // Publish the new sven_state after handling the command
+                                let sven_state_pub = SvenStatePub::new(&sven_state);
+                                let sven_state_json: serde_json_core::heapless::String<128> =
+                                    serde_json_core::to_string(&sven_state_pub).unwrap_or_else(
+                                        |e| {
+                                            error!("Failed to serialize SvenState: {:?}", e);
+                                            serde_json_core::heapless::String::from("{}")
+                                        },
+                                    );
+                                info!("Publishing SvenState: {:?}", sven_state_pub);
+                                client
+                                    .send_message("sven/state", sven_state_json.as_bytes(), rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0, true)
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        error!("Failed to publish SvenState: {:?}", e);
+                                    });
                             } else {
                                 error!("Failed to parse MQTT message");
                                 continue;
@@ -304,12 +341,6 @@ pub enum SvenCommand {
     DownRelative,   // value: mm
     AbsoluteHeight, // value: mm
     Position,       // value: SvenPosition
-}
-
-#[derive(Deserialize, Debug)]
-pub enum Direction {
-    Up,
-    Down,
 }
 
 #[derive(Deserialize, Debug)]

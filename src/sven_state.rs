@@ -1,6 +1,8 @@
+use serde::Serialize;
+
 use crate::gpio::PulsePin;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Serialize, Clone, PartialEq, Eq, Hash)]
 pub enum SvenPosition {
     Bottom,
     Top,
@@ -26,9 +28,24 @@ impl TryFrom<u32> for SvenPosition {
     }
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct SvenStatePub {
+    pub height_mm: u32,
+    pub position: SvenPosition,
+}
+
+impl SvenStatePub {
+    pub fn new(sven_state: &SvenState) -> Self {
+        SvenStatePub {
+            height_mm: sven_state.height_mm,
+            position: sven_state.position,
+        }
+    }
+}
+
 pub struct SvenState<'d> {
-    height_mm: u32,
-    position: SvenPosition,
+    pub height_mm: u32,
+    pub position: SvenPosition,
     pin_up: PulsePin<'d>,
     pin_down: PulsePin<'d>,
 }
