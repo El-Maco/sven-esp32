@@ -14,14 +14,13 @@ use esp_wifi::wifi::WifiStaDevice;
 use esp_wifi::{wifi::WifiDevice, EspWifiController};
 use heapless::Vec;
 use log::{debug, error, info, warn};
-use rust_mqtt::packet::v5::mqtt_packet::Packet;
 use rust_mqtt::packet::v5::reason_codes::ReasonCode;
 use rust_mqtt::{client::client::MqttClient, utils::rng_generator::CountingRng};
 use serde::Deserialize;
 use serde_json_core::from_slice;
 
 use sven_esp32::gpio::PulsePin;
-use sven_esp32::sven_state::{SvenPosition, SvenState, SvenStatePub};
+use sven_esp32::sven_state::{SvenPosition, SvenState, SvenStateMsg};
 
 extern crate alloc;
 
@@ -159,10 +158,32 @@ async fn main(spawner: Spawner) {
                         }
                     },
                 }
+                // Get Sven State
+
+                client.subscribe_to_topic("sven/state").await.ok();
+                match client.receive_message().await {
+                    Ok((topic, packet)) => {
+                        info!("Received message from mqtt topic {topic}");
+                        if topic == "sven/state" {
+                            if let Some(curr_sven_state) = mqtt_packet_to_sven_state(packet).ok() {
+                                info!("Setting height_mm to {}, position {:?}", curr_sven_state.height_mm, curr_sven_state.position);
+                                sven_state.height_mm = curr_sven_state.height_mm;
+                                sven_state.position = curr_sven_state.position;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error receiving packet: {:?}", e);
+                    }
+                }
+                match client.unsubscribe_from_topic("sven/state").await {
+                    Ok(_) => info!("Unsubscribed from topic: sven/state"),
+                    Err(e) => error!("Failed to unsubscribe from topic: {:?}", e)
+                }
 
                 client.subscribe_to_topic("sven/command").await.ok();
 
-                let sven_state_pub = SvenStatePub::new(&sven_state);
+                let sven_state_pub = SvenStateMsg::new(&sven_state);
                 let sven_state_json: serde_json_core::heapless::String<128> =
                     serde_json_core::to_string(&sven_state_pub).unwrap_or_else(|e| {
                         error!("Failed to serialize SvenState: {:?}", e);
@@ -188,12 +209,12 @@ async fn main(spawner: Spawner) {
                             info!("Received packet: {topic}: {:?}", packet);
                             let text = from_utf8(packet).unwrap_or("");
                             info!("Received packet text: {}", text);
-                            if let Some(command) = parse_mqtt_message(packet).ok() {
+                            if let Some(command) = mqtt_packet_to_desk_command(packet).ok() {
                                 info!("Parsed command: {:?}", command);
                                 // Handle the desk command
                                 handle_desk_command(&command, &mut sven_state).await;
                                 // Publish the new sven_state after handling the command
-                                let sven_state_pub = SvenStatePub::new(&sven_state);
+                                let sven_state_pub = SvenStateMsg::new(&sven_state);
                                 let sven_state_json: serde_json_core::heapless::String<128> =
                                     serde_json_core::to_string(&sven_state_pub).unwrap_or_else(
                                         |e| {
@@ -349,7 +370,19 @@ pub struct DeskCommand {
     pub value: u32,
 }
 
-fn parse_mqtt_message(data: &[u8]) -> Result<DeskCommand, serde_json_core::de::Error> {
+fn mqtt_packet_to_sven_state(data: &[u8]) -> Result<SvenStateMsg, serde_json_core::de::Error> {
+    match from_slice::<SvenStateMsg>(data) {
+        Ok((sven_state, _)) => {
+            info!("Received SvenState: {:?}", sven_state);
+            Ok(sven_state)
+        }
+        Err(e) => {
+            panic!("Failed to parse message to SvenState: {:?}", e);
+        }
+    }
+}
+
+fn mqtt_packet_to_desk_command(data: &[u8]) -> Result<DeskCommand, serde_json_core::de::Error> {
     match from_slice::<DeskCommand>(data) {
         Ok((command, _)) => {
             info!("Received command: {:?}", command);

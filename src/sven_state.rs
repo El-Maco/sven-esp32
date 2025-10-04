@@ -1,9 +1,9 @@
 use log::info;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::gpio::PulsePin;
 
-#[derive(Debug, Copy, Serialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum SvenPosition {
     Bottom,
     Top,
@@ -28,16 +28,31 @@ impl TryFrom<u32> for SvenPosition {
         }
     }
 }
+impl TryFrom<&str> for SvenPosition {
+    type Error = ();
 
-#[derive(Debug, Serialize, Clone)]
-pub struct SvenStatePub {
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "Bottom" => Ok(SvenPosition::Bottom),
+            "Top" => Ok(SvenPosition::Top),
+            "Armrest" => Ok(SvenPosition::Armrest),
+            "AboveArmrest" => Ok(SvenPosition::AboveArmrest),
+            "Standing" => Ok(SvenPosition::Standing),
+            "Custom" => Ok(SvenPosition::Custom),
+            _ => panic!("Failed to parse {:?} to a SvenPosition", value),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SvenStateMsg {
     pub height_mm: u32,
     pub position: SvenPosition,
 }
 
-impl SvenStatePub {
+impl SvenStateMsg {
     pub fn new(sven_state: &SvenState) -> Self {
-        SvenStatePub {
+        SvenStateMsg {
             height_mm: sven_state.height_mm,
             position: sven_state.position,
         }
@@ -78,14 +93,12 @@ impl<'d> SvenState<'d> {
     // Create a new SvenState instance with default position
     // and height set to the armrest position.
     pub async fn new(pin_up: PulsePin<'d>, pin_down: PulsePin<'d>) -> Self {
-        let mut sven_state = SvenState {
+        SvenState {
             height_mm: 0,
             position: SvenPosition::Custom,
             pin_up,
             pin_down,
-        };
-        sven_state.move_to_position(SvenPosition::Standing).await;
-        sven_state
+        }
     }
 
     fn get_position_mm(&self, position: SvenPosition) -> u32 {
@@ -163,7 +176,7 @@ impl<'d> SvenState<'d> {
                 SvenPosition::Standing => self.move_up(15000).await,
                 SvenPosition::Top => self.move_up(20000).await,
                 _ => {}
-            }
+            },
             _ => {}
         }
         self.position = position;

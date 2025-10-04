@@ -1,6 +1,5 @@
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::Output;
-use log::info;
 
 pub struct PulsePin<'d> {
     pin: Output<'d>,
