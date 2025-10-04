@@ -135,11 +135,34 @@ impl<'d> SvenState<'d> {
     }
 
     pub async fn move_to_position(&mut self, position: SvenPosition) {
-        if self.position == SvenPosition::Custom {
-            self.move_up(20000).await; // Move to top position
-            self.position = SvenPosition::Top;
-            self.height_mm = Self::MAX_HEIGHT_MM;
+        match self.position {
+            SvenPosition::Custom => match position {
+                SvenPosition::Bottom => {
+                    self.move_down_relative(self.height_mm - Self::MIN_HEIGHT_MM)
+                        .await;
+                    self.move_down(2000).await;
+                }
+                SvenPosition::Top => {
+                    self.move_up_relative(Self::MAX_HEIGHT_MM - self.height_mm)
+                        .await;
+                    self.move_up(5000).await;
+                }
+                // As calibration
+                _ => {
+                    if self.height_mm - Self::MIN_HEIGHT_MM < Self::MAX_HEIGHT_MM - self.height_mm {
+                        self.move_down(20000).await; // Ensures at bottom
+                        self.position = SvenPosition::Bottom;
+                        self.height_mm = Self::MIN_HEIGHT_MM
+                    } else {
+                        self.move_up(20000).await; // Ensures at top
+                        self.position = SvenPosition::Top;
+                        self.height_mm = Self::MAX_HEIGHT_MM;
+                    }
+                }
+            },
+            _ => {}
         }
+
         match self.position {
             SvenPosition::Top => match position {
                 SvenPosition::Top => self.move_up(5000).await, // Move up just in case
