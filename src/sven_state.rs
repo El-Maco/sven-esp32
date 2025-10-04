@@ -172,7 +172,7 @@ impl<'d> SvenState<'d> {
             },
             SvenPosition::Bottom => match position {
                 SvenPosition::Armrest => self.move_up(4300).await,
-                SvenPosition::AboveArmrest => self.move_up(5200).await,
+                SvenPosition::AboveArmrest => self.move_up(5300).await,
                 SvenPosition::Standing => self.move_up(15000).await,
                 SvenPosition::Top => self.move_up(20000).await,
                 _ => {}
