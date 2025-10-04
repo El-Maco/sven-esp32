@@ -1,3 +1,4 @@
+use log::info;
 use serde::Serialize;
 
 use crate::gpio::PulsePin;
@@ -83,7 +84,7 @@ impl<'d> SvenState<'d> {
             pin_up,
             pin_down,
         };
-        sven_state.move_to_position(SvenPosition::Armrest).await;
+        sven_state.move_to_position(SvenPosition::Standing).await;
         sven_state
     }
 
@@ -149,6 +150,7 @@ impl<'d> SvenState<'d> {
     }
 
     pub async fn move_up(&mut self, delta_ms: u32) {
+        info!("Moving up {} ms", delta_ms);
         let delta_mm = self.get_duration_mm(delta_ms);
 
         self.height_mm = Self::MAX_HEIGHT_MM.min(self.height_mm.saturating_add(delta_mm));
@@ -156,6 +158,7 @@ impl<'d> SvenState<'d> {
     }
 
     pub async fn move_down(&mut self, delta_ms: u32) {
+        info!("Moving down {} ms", delta_ms);
         let delta_mm = self.get_duration_mm(delta_ms);
         self.height_mm = Self::MIN_HEIGHT_MM.max(self.height_mm.saturating_sub(delta_mm));
         self.pin_down.pulse(delta_ms).await;
@@ -173,7 +176,9 @@ impl<'d> SvenState<'d> {
             if *max_duration == 0 {
                 break; // No more distance can be moved (within 9 mm)
             }
+            info!("Moving up {} mm equates to {} ms", delta_mm, max_duration);
             self.move_up(*max_duration).await;
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(1000u64)).await;
             distance_left = distance_left.saturating_sub(*max_distance);
         }
     }
@@ -190,21 +195,30 @@ impl<'d> SvenState<'d> {
             if *max_duration == 0 {
                 break; // No more distance can be moved (within 9 mm)
             }
+            info!("Moving down {} mm equates to {} ms", delta_mm, max_duration);
             self.move_down(*max_duration).await;
+            embassy_time::Timer::after(embassy_time::Duration::from_millis(1000u64)).await;
             distance_left = distance_left.saturating_sub(*max_distance);
         }
     }
 
     pub async fn move_to_height(&mut self, height_mm: u32) {
+        info!(
+            "Moving from height {} mm to {} mm",
+            self.height_mm, height_mm
+        );
         if height_mm == self.height_mm {
+            info!("Already at height {} mm", height_mm);
             return; // Already at the desired height
         }
 
         if height_mm < Self::MIN_HEIGHT_MM {
+            info!("Moving to SvenPosition::Bottom");
             self.move_to_position(SvenPosition::Bottom).await;
             return;
         }
         if height_mm > Self::MAX_HEIGHT_MM {
+            info!("Moving to SvenPosition::Top");
             self.move_to_position(SvenPosition::Top).await;
             return; // Invalid height
         }
