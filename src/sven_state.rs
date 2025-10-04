@@ -95,6 +95,19 @@ impl<'d> SvenState<'d> {
             .map_or(Self::MIN_HEIGHT_MM, |&(_, height)| height)
     }
 
+    fn get_position_from_height(&self) -> SvenPosition {
+        const POS_THRESH: u32 = 5;
+        let curr_height = self.height_mm;
+        let position = Self::POSITIONS_MM
+            .iter()
+            .find(|&&(_, pos_height)| {
+                (curr_height < pos_height + POS_THRESH) && (curr_height > pos_height - POS_THRESH)
+            })
+            .map_or(SvenPosition::Custom, |&(pos, _)| pos);
+        info!("New position: {}", position as u32);
+        position
+    }
+
     fn get_duration_mm(&self, ms: u32) -> u32 {
         // handle 11s ->
         let s = ms / 1000;
@@ -153,15 +166,17 @@ impl<'d> SvenState<'d> {
         info!("Moving up {} ms", delta_ms);
         let delta_mm = self.get_duration_mm(delta_ms);
 
-        self.height_mm = Self::MAX_HEIGHT_MM.min(self.height_mm.saturating_add(delta_mm));
         self.pin_up.pulse(delta_ms).await;
+        self.height_mm = Self::MAX_HEIGHT_MM.min(self.height_mm.saturating_add(delta_mm));
+        self.position = self.get_position_from_height();
     }
 
     pub async fn move_down(&mut self, delta_ms: u32) {
         info!("Moving down {} ms", delta_ms);
         let delta_mm = self.get_duration_mm(delta_ms);
-        self.height_mm = Self::MIN_HEIGHT_MM.max(self.height_mm.saturating_sub(delta_mm));
         self.pin_down.pulse(delta_ms).await;
+        self.height_mm = Self::MIN_HEIGHT_MM.max(self.height_mm.saturating_sub(delta_mm));
+        self.position = self.get_position_from_height();
     }
 
     pub async fn move_up_relative(&mut self, delta_mm: u32) {
