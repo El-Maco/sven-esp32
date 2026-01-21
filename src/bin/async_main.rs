@@ -111,7 +111,7 @@ async fn main(spawner: Spawner) {
 
         let mut socket: TcpSocket<'_> = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
-        socket.set_timeout(Some(embassy_time::Duration::from_secs(60)));
+        socket.set_timeout(Some(embassy_time::Duration::from_secs(300)));
 
         let ip = str_to_ip(MQTT_HOST);
         let port = 1883;
@@ -133,6 +133,8 @@ async fn main(spawner: Spawner) {
                 config.max_packet_size = 100;
                 let mut recv_buffer = [0; 80];
                 let mut write_buffer = [0; 80];
+
+                config.add_will("sven/status", b"offline", true);
 
                 let mut client = MqttClient::<_, 5, _>::new(
                     socket,
@@ -166,7 +168,10 @@ async fn main(spawner: Spawner) {
                         info!("Received message from mqtt topic {topic}");
                         if topic == "sven/state" {
                             if let Some(curr_sven_state) = mqtt_packet_to_sven_state(packet).ok() {
-                                info!("Setting height_mm to {}, position {:?}", curr_sven_state.height_mm, curr_sven_state.position);
+                                info!(
+                                    "Setting height_mm to {}, position {:?}",
+                                    curr_sven_state.height_mm, curr_sven_state.position
+                                );
                                 sven_state.height_mm = curr_sven_state.height_mm;
                                 sven_state.position = curr_sven_state.position;
                             }
@@ -178,28 +183,21 @@ async fn main(spawner: Spawner) {
                 }
                 match client.unsubscribe_from_topic("sven/state").await {
                     Ok(_) => info!("Unsubscribed from topic: sven/state"),
-                    Err(e) => error!("Failed to unsubscribe from topic: {:?}", e)
+                    Err(e) => error!("Failed to unsubscribe from topic: {:?}", e),
                 }
 
                 client.subscribe_to_topic("sven/command").await.ok();
 
-                let sven_state_pub = SvenStateMsg::new(&sven_state);
-                let sven_state_json: serde_json_core::heapless::String<128> =
-                    serde_json_core::to_string(&sven_state_pub).unwrap_or_else(|e| {
-                        error!("Failed to serialize SvenState: {:?}", e);
-                        serde_json_core::heapless::String::from("{}")
-                    });
-                info!("Publishing SvenState: {:?}", sven_state_pub);
                 client
                     .send_message(
-                        "sven/state",
-                        sven_state_json.as_bytes(),
+                        "sven/status",
+                        b"online",
                         rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0,
                         true,
                     )
                     .await
                     .unwrap_or_else(|e| {
-                        error!("Failed to publish SvenState: {:?}", e);
+                        error!("Failed to publish SvenStatus: {:?}", e);
                     });
 
                 loop {
