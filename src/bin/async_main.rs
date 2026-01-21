@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json_core::from_slice;
 
 use sven_esp32::gpio::PulsePin;
-use sven_esp32::sven_state::{SvenPosition, SvenState, SvenStateMsg};
+use sven_esp32::sven_state::{SvenTopic, SvenPosition, SvenState, SvenStateMsg};
 
 extern crate alloc;
 
@@ -134,7 +134,7 @@ async fn main(spawner: Spawner) {
                 let mut recv_buffer = [0; 80];
                 let mut write_buffer = [0; 80];
 
-                config.add_will("sven/status", b"offline", true);
+                config.add_will(SvenTopic::Status.as_str(), b"offline", true);
 
                 let mut client = MqttClient::<_, 5, _>::new(
                     socket,
@@ -162,12 +162,11 @@ async fn main(spawner: Spawner) {
                 }
                 // Get Sven State
 
-                client.subscribe_to_topic("sven/state").await.ok();
+                client.subscribe_to_topic(SvenTopic::State.as_str()).await.ok();
                 match client.receive_message().await {
-                    Ok((topic, packet)) => {
-                        info!("Received message from mqtt topic {topic}");
-                        if topic == "sven/state" {
-                            if let Some(curr_sven_state) = mqtt_packet_to_sven_state(packet).ok() {
+                    Ok((topic, packet)) if topic == SvenTopic::State.as_str()=> {
+                        match mqtt_packet_to_sven_state(packet) {
+                            Ok(curr_sven_state) => {
                                 info!(
                                     "Setting height_mm to {}, position {:?}",
                                     curr_sven_state.height_mm, curr_sven_state.position
@@ -175,22 +174,28 @@ async fn main(spawner: Spawner) {
                                 sven_state.height_mm = curr_sven_state.height_mm;
                                 sven_state.position = curr_sven_state.position;
                             }
+                            Err(e) => {
+                                error!("Failed to parse sven state: {:?}", e);
+                            }
                         }
+                    }
+                    Ok((topic, _)) => {
+                        info!("Received message from mqtt topic {topic}");
                     }
                     Err(e) => {
                         error!("Error receiving packet: {:?}", e);
                     }
                 }
-                match client.unsubscribe_from_topic("sven/state").await {
-                    Ok(_) => info!("Unsubscribed from topic: sven/state"),
+                match client.unsubscribe_from_topic(SvenTopic::State.as_str()).await {
+                    Ok(_) => info!("Unsubscribed from topic: {}", SvenTopic::State.as_str()),
                     Err(e) => error!("Failed to unsubscribe from topic: {:?}", e),
                 }
 
-                client.subscribe_to_topic("sven/command").await.ok();
+                client.subscribe_to_topic(SvenTopic::Command.as_str()).await.ok();
 
                 client
                     .send_message(
-                        "sven/status",
+                        SvenTopic::Status.as_str(),
                         b"online",
                         rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0,
                         true,
@@ -222,7 +227,7 @@ async fn main(spawner: Spawner) {
                                     );
                                 info!("Publishing SvenState: {:?}", sven_state_pub);
                                 client
-                                    .send_message("sven/state", sven_state_json.as_bytes(), rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0, true)
+                                    .send_message(SvenTopic::State.as_str(), sven_state_json.as_bytes(), rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS0, true)
                                     .await
                                     .unwrap_or_else(|e| {
                                         error!("Failed to publish SvenState: {:?}", e);

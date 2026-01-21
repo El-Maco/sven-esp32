@@ -3,6 +3,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::gpio::PulsePin;
 
+pub enum SvenTopic {
+    Command,
+    State,
+    Status,
+}
+
+impl SvenTopic {
+    pub fn as_str(&self) -> &str {
+        match self {
+            SvenTopic::Command => "sven/command",
+            SvenTopic::State => "sven/state",
+            SvenTopic::Status => "sven/status",
+        }
+    }
+}
+
 #[derive(Debug, Copy, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum SvenPosition {
     Bottom,
