@@ -1,3 +1,4 @@
+use esp_hal::gpio::Input;
 use log::info;
 use serde::{Deserialize, Serialize};
 
@@ -80,6 +81,8 @@ pub struct SvenState<'d> {
     pub position: SvenPosition,
     pin_up: PulsePin<'d>,
     pin_down: PulsePin<'d>,
+    button_up: Input<'d>,
+    button_down: Input<'d>,
 }
 
 impl<'d> SvenState<'d> {
@@ -108,12 +111,19 @@ impl<'d> SvenState<'d> {
 
     // Create a new SvenState instance with default position
     // and height set to the armrest position.
-    pub async fn new(pin_up: PulsePin<'d>, pin_down: PulsePin<'d>) -> Self {
+    pub async fn new(
+        pin_up: PulsePin<'d>,
+        pin_down: PulsePin<'d>,
+        button_up: Input<'d>,
+        button_down: Input<'d>,
+    ) -> Self {
         SvenState {
             height_mm: 0,
             position: SvenPosition::Custom,
             pin_up,
             pin_down,
+            button_up,
+            button_down,
         }
     }
 
@@ -304,6 +314,20 @@ impl<'d> SvenState<'d> {
         } else {
             let delta_mm = self.height_mm - height_mm;
             self.move_down_relative(delta_mm).await;
+        }
+    }
+
+    pub async fn handle_button_press(&mut self) {
+        if self.button_up.is_high() {
+            self.pin_up.toggle_on().await;
+            while self.button_up.is_high() {}
+            self.pin_up.toggle_off().await;
+        }
+
+        if self.button_down.is_high() {
+            self.pin_down.toggle_on().await;
+            while self.button_down.is_high() {}
+            self.pin_down.toggle_off().await;
         }
     }
 }

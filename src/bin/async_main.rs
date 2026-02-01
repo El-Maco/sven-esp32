@@ -7,7 +7,7 @@ use embassy_executor::Spawner;
 use embassy_net::{tcp::TcpSocket, IpAddress, IpEndpoint, Runner, StackResources};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
-use esp_hal::gpio::Output;
+use esp_hal::gpio::{Input, Output};
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
 use esp_wifi::wifi::WifiStaDevice;
@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json_core::from_slice;
 
 use sven_esp32::gpio::PulsePin;
-use sven_esp32::sven_state::{SvenTopic, SvenPosition, SvenState, SvenStateMsg};
+use sven_esp32::sven_state::{SvenPosition, SvenState, SvenStateMsg, SvenTopic};
 
 extern crate alloc;
 
@@ -50,18 +50,24 @@ async fn main(spawner: Spawner) {
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     let mut rng = Rng::new(peripherals.RNG);
 
+    let d2 = peripherals.GPIO5;
+    let d3 = peripherals.GPIO7;
+    let d7 = peripherals.GPIO9;
+    let d8 = peripherals.GPIO10;
+
     let pin_up = PulsePin::new(
-        Output::new(peripherals.GPIO5, esp_hal::gpio::Level::Low),
+        Output::new(d2, esp_hal::gpio::Level::Low),
         true,
     );
     let pin_down = PulsePin::new(
-        Output::new(peripherals.GPIO7, esp_hal::gpio::Level::Low),
+        Output::new(d3, esp_hal::gpio::Level::Low),
         true,
     );
 
-    esp_println::logger::init_logger_from_env();
+    let button_up = Input::new(d7, esp_hal::gpio::Pull::Down);
+    let button_down = Input::new(d8, esp_hal::gpio::Pull::Down);
 
-    // let timer0 = esp_hal::timer::systimer::SystemTimer::new(peripherals.SYSTIMER);
+    esp_println::logger::init_logger_from_env();
 
     // configure wifi
     let init = &*mk_static!(
@@ -102,16 +108,16 @@ async fn main(spawner: Spawner) {
         error!("No IPv4 configuration available!");
     }
 
-    let mut sven_state = SvenState::new(pin_up, pin_down).await;
+    let mut sven_state = SvenState::new(pin_up, pin_down, button_up, button_down).await;
 
     loop {
-        sleep(1_000).await;
+        sven_state.handle_button_press().await;
         let mut rx_buffer = [0; 4096];
         let mut tx_buffer = [0; 4096];
 
         let mut socket: TcpSocket<'_> = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
-        socket.set_timeout(Some(embassy_time::Duration::from_secs(300)));
+        socket.set_timeout(Some(embassy_time::Duration::from_secs(1)));
 
         let ip = str_to_ip(MQTT_HOST);
         let port = 1883;
@@ -162,9 +168,12 @@ async fn main(spawner: Spawner) {
                 }
                 // Get Sven State
 
-                client.subscribe_to_topic(SvenTopic::State.as_str()).await.ok();
+                client
+                    .subscribe_to_topic(SvenTopic::State.as_str())
+                    .await
+                    .ok();
                 match client.receive_message().await {
-                    Ok((topic, packet)) if topic == SvenTopic::State.as_str()=> {
+                    Ok((topic, packet)) if topic == SvenTopic::State.as_str() => {
                         match mqtt_packet_to_sven_state(packet) {
                             Ok(curr_sven_state) => {
                                 info!(
@@ -183,15 +192,21 @@ async fn main(spawner: Spawner) {
                         info!("Received message from mqtt topic {topic}");
                     }
                     Err(e) => {
-                        error!("Error receiving packet: {:?}", e);
+                        error!("Error receiving sven state: {:?}", e);
                     }
                 }
-                match client.unsubscribe_from_topic(SvenTopic::State.as_str()).await {
+                match client
+                    .unsubscribe_from_topic(SvenTopic::State.as_str())
+                    .await
+                {
                     Ok(_) => info!("Unsubscribed from topic: {}", SvenTopic::State.as_str()),
                     Err(e) => error!("Failed to unsubscribe from topic: {:?}", e),
                 }
 
-                client.subscribe_to_topic(SvenTopic::Command.as_str()).await.ok();
+                client
+                    .subscribe_to_topic(SvenTopic::Command.as_str())
+                    .await
+                    .ok();
 
                 client
                     .send_message(
@@ -239,11 +254,10 @@ async fn main(spawner: Spawner) {
                         }
                         Err(e) => {
                             error!("Error receiving packet: {:?}", e);
-                            break; // Exit the loop on error
+                            break;
                         }
                     }
                     info!("Waiting for next packet...");
-                    sleep(1000).await;
                 }
             }
             Err(e) => {
@@ -427,3 +441,4 @@ async fn handle_desk_command<'d>(command: &DeskCommand, sven_state: &mut SvenSta
         }
     }
 }
+

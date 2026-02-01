@@ -25,4 +25,20 @@ impl<'d> PulsePin<'d> {
             self.pin.set_high();
         }
     }
+
+    pub async fn toggle_on(&mut self) {
+        if self.active_high {
+            self.pin.set_high();
+        } else {
+            self.pin.set_low();
+        }
+    }
+
+    pub async fn toggle_off(&mut self) {
+        if self.active_high {
+            self.pin.set_low();
+        } else {
+            self.pin.set_high();
+        }
+    }
 }
