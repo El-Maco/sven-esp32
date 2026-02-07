@@ -117,7 +117,7 @@ async fn main(spawner: Spawner) {
 
         let mut socket: TcpSocket<'_> = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
-        socket.set_timeout(Some(embassy_time::Duration::from_secs(1)));
+        socket.set_timeout(Some(embassy_time::Duration::from_secs(3600)));
 
         let ip = str_to_ip(MQTT_HOST);
         let port = 1883;
@@ -137,6 +137,7 @@ async fn main(spawner: Spawner) {
                 );
                 config.add_client_id("sven-esp32");
                 config.max_packet_size = 100;
+                config.keep_alive = 3600;
                 let mut recv_buffer = [0; 80];
                 let mut write_buffer = [0; 80];
 
