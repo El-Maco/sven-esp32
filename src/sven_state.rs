@@ -175,15 +175,9 @@ impl<'d> SvenState<'d> {
                 }
                 // As calibration
                 _ => {
-                    if self.height_mm - Self::MIN_HEIGHT_MM < Self::MAX_HEIGHT_MM - self.height_mm {
-                        self.move_down(20000).await; // Ensures at bottom
-                        self.position = SvenPosition::Bottom;
-                        self.height_mm = Self::MIN_HEIGHT_MM
-                    } else {
-                        self.move_up(20000).await; // Ensures at top
-                        self.position = SvenPosition::Top;
-                        self.height_mm = Self::MAX_HEIGHT_MM;
-                    }
+                    let target_height = self.get_position_mm(position);
+                    info!("Moving to custom position {:?} with target height {} mm", position, target_height);
+                    self.move_to_height(target_height).await;
                 }
             },
             _ => {}
@@ -297,22 +291,11 @@ impl<'d> SvenState<'d> {
             return; // Already at the desired height
         }
 
-        if height_mm < Self::MIN_HEIGHT_MM {
-            info!("Moving to SvenPosition::Bottom");
-            self.move_to_position(SvenPosition::Bottom).await;
-            return;
-        }
-        if height_mm > Self::MAX_HEIGHT_MM {
-            info!("Moving to SvenPosition::Top");
-            self.move_to_position(SvenPosition::Top).await;
-            return; // Invalid height
-        }
-
         if height_mm > self.height_mm {
-            let delta_mm = height_mm - self.height_mm;
+            let delta_mm = height_mm.min(Self::MAX_HEIGHT_MM) - self.height_mm;
             self.move_up_relative(delta_mm).await;
         } else {
-            let delta_mm = self.height_mm - height_mm;
+            let delta_mm = self.height_mm - height_mm.max(Self::MIN_HEIGHT_MM);
             self.move_down_relative(delta_mm).await;
         }
     }
