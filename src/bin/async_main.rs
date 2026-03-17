@@ -55,14 +55,8 @@ async fn main(spawner: Spawner) {
     let d7 = peripherals.GPIO9;
     let d8 = peripherals.GPIO10;
 
-    let pin_up = PulsePin::new(
-        Output::new(d2, esp_hal::gpio::Level::Low),
-        true,
-    );
-    let pin_down = PulsePin::new(
-        Output::new(d3, esp_hal::gpio::Level::Low),
-        true,
-    );
+    let pin_up = PulsePin::new(Output::new(d2, esp_hal::gpio::Level::Low), true);
+    let pin_down = PulsePin::new(Output::new(d3, esp_hal::gpio::Level::Low), true);
 
     let button_up = Input::new(d7, esp_hal::gpio::Pull::Down);
     let button_down = Input::new(d8, esp_hal::gpio::Pull::Down);
@@ -380,6 +374,7 @@ pub enum SvenCommand {
     DownRelative,   // value: mm
     AbsoluteHeight, // value: mm
     Position,       // value: SvenPosition
+    Calibrate,      // value: SvenPosition
 }
 
 #[derive(Deserialize, Debug)]
@@ -440,6 +435,20 @@ async fn handle_desk_command<'d>(command: &DeskCommand, sven_state: &mut SvenSta
                 SvenPosition::try_from(command.value).unwrap_or(SvenPosition::Armrest);
             sven_state.move_to_position(sven_position).await;
         }
+        SvenCommand::Calibrate => {
+            info!("Calibrating position at {:?}", command.value);
+            let bottom_mm = sven_state.get_position_mm(SvenPosition::Bottom);
+            let top_mm = sven_state.get_position_mm(SvenPosition::Top);
+
+            if sven_state.height_mm - bottom_mm < top_mm - sven_state.height_mm {
+                sven_state.move_to_position(SvenPosition::Bottom).await;
+            } else {
+                sven_state.move_to_position(SvenPosition::Top).await;
+            }
+
+            let sven_position =
+                SvenPosition::try_from(command.value).unwrap_or(SvenPosition::Armrest);
+            sven_state.move_to_position(sven_position).await;
+        }
     }
 }
-

@@ -127,7 +127,7 @@ impl<'d> SvenState<'d> {
         }
     }
 
-    fn get_position_mm(&self, position: SvenPosition) -> u32 {
+    pub fn get_position_mm(&self, position: SvenPosition) -> u32 {
         Self::POSITIONS_MM
             .iter()
             .find(|&&(pos, _)| pos == position)
@@ -166,7 +166,7 @@ impl<'d> SvenState<'d> {
                 SvenPosition::Bottom => {
                     self.move_down_relative(self.height_mm - Self::MIN_HEIGHT_MM)
                         .await;
-                    self.move_down(2000).await;
+                    self.move_down(5000).await;
                 }
                 SvenPosition::Top => {
                     self.move_up_relative(Self::MAX_HEIGHT_MM - self.height_mm)
